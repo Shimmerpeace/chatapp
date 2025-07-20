@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { makeSureDbIsReady } from "@/lib/dataBase";
 import { User } from "@/models/User";
+import { hashPassword, signJwt } from "@/lib/useAuth";
 
 export async function POST(req) {
   try {
@@ -17,7 +18,7 @@ export async function POST(req) {
       );
     }
 
-    const { name, email, password } = data;
+    let { name, email, password } = data;
     if (!name || !email || !password) {
       return NextResponse.json(
         { success: false, error: "Missing fields" },
@@ -31,20 +32,50 @@ export async function POST(req) {
         { status: 400 }
       );
     }
+    // Basic email format check optional!
+    // if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    //   return NextResponse.json(
+    //     { success: false, error: "Invalid email format" },
+    //     { status: 400 }
+    //   );
+    // }
     // Check if user already exists
-    if (await User.findOne({ email })) {
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
       return NextResponse.json(
-        { success: false, error: "Email already registered" },
+        { success: false, error: "User already exists" },
         { status: 400 }
       );
     }
 
-    // You should hash password in prod!
-    const user = await User.create({ name, email, password });
-    return NextResponse.json({
-      success: true,
-      user: { name: user.name, email: user.email, _id: user._id },
+    // Hash password (for registration)** Hashes password manually with bcrypt before creating user.
+    const hashedPassword = await hashPassword(password);
+    // Create user
+    const user = await User.create({ 
+      name, 
+      email, 
+      password: hashedPassword, 
     });
+    // Generate a token
+    const token = signJwt({ _id: user._id, email: user.email });
+
+    const response = NextResponse.json({
+      success: true,
+      user: { 
+        name: user.name, 
+        email: user.email, 
+        _id: user._id,
+       },
+       token,
+    });
+    response.cookies.set("token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 7, // 7 days
+    });
+
+    return response;
   } catch (e) {
     console.log("Route error:", e); // Log for yourself!
     return NextResponse.json(
@@ -53,6 +84,8 @@ export async function POST(req) {
     );
   }
 }
+
+
 /**
  import { NextResponse } from "next/server";
 import { makeSureDbIsReady } from "@/lib/dataBase";
